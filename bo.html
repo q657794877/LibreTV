@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArtPlayer视频播放器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/artplayer@5.0.5/dist/artplayer.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        #player {
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 9999;
+        }
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            font-size: 1.5rem;
+            color: white;
+            background: #000;
+            flex-direction: column;
+        }
+        
+        .loading::after {
+            content: "";
+            width: 40px;
+            height: 40px;
+            border: 5px solid rgba(255, 255, 255, 0.3);
+            border-top: 5px solid #fdbb2d;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-top: 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error-message {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            flex-direction: column;
+            text-align: center;
+            padding: 20px;
+            color: white;
+            background: #000;
+        }
+        
+        .error-message h3 {
+            color: #ff6b6b;
+            margin-bottom: 15px;
+            font-size: 2rem;
+        }
+        
+        .error-message p {
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+            opacity: 0.8;
+        }
+        
+        .url-example {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            max-width: 90%;
+            overflow-x: auto;
+        }
+        
+        code {
+            color: #fdbb2d;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        
+        .retry-button {
+            background: #fdbb2d;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background 0.3s;
+            font-size: 1rem;
+        }
+        
+        .retry-button:hover {
+            background: #ffcc44;
+        }
+        
+        .format-tags {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+            max-width: 90%;
+        }
+        
+        .format-tag {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #4CAF50;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .format-info {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            max-width: 90%;
+        }
+        
+        .format-info h4 {
+            color: #fdbb2d;
+            margin-bottom: 10px;
+        }
+        
+        .hls-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(76, 175, 80, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            z-index: 10000;
+        }
+        
+        .dash-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(33, 150, 243, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            z-index: 10000;
+        }
+    </style>
+</head>
+<body>
+    <div id="player">
+        <div class="loading">
+            <span>正在检查视频URL...</span>
+        </div>
+    </div>
+
+    <!-- 引入HLS.js库以支持M3U8格式 -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- 引入DASH.js库以支持MPD格式 -->
+    <script src="https://cdn.jsdelivr.net/npm/dashjs@latest/dist/dash.all.min.js"></script>
+    <!-- 引入Flv.js库以支持FLV格式 -->
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@latest/dist/flv.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/artplayer@5.0.5/dist/artplayer.js"></script>
+    <script>
+        // 全局播放器实例和流媒体实例
+        let artPlayer = null;
+        let hls = null;
+        let dashPlayer = null;
+        let flvPlayer = null;
+        
+        // 支持的视频格式
+        const supportedFormats = {
+            'MP4': ['.mp4'],
+            'WebM': ['.webm'],
+            'M3U8 (HLS)': ['.m3u8'],
+            'MPD (DASH)': ['.mpd'],
+            'FLV': ['.flv'],
+            'MKV': ['.mkv'],
+            'AVI': ['.avi'],
+            'MOV': ['.mov'],
+            'WMV': ['.wmv'],
+            '3GP': ['.3gp'],
+            'OGG': ['.ogg', '.ogv']
+        };
+        
+        // 解析URL参数
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            const videoParam = params.get('video');
+            
+            // 如果有URL参数，使用参数中的视频
+            if (videoParam) {
+                return {
+                    url: videoParam,
+                    poster: params.get('poster') || '',
+                    title: params.get('title') || '视频',
+                    type: params.get('type') || detectVideoType(videoParam)
+                };
+            }
+            
+            // 没有URL参数，返回null
+            return null;
+        }
+        
+        // 检测视频类型
+        function detectVideoType(url) {
+            const urlLower = url.toLowerCase();
+            
+            // HLS流媒体
+            if (urlLower.endsWith('.m3u8') || urlLower.includes('.m3u8?')) {
+                return 'hls';
+            }
+            
+            // DASH流媒体
+            if (urlLower.endsWith('.mpd') || urlLower.includes('.mpd?')) {
+                return 'dash';
+            }
+            
+            // FLV流媒体
+            if (urlLower.endsWith('.flv') || urlLower.includes('.flv?')) {
+                return 'flv';
+            }
+            
+            // 常规视频格式
+            const videoExtensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.wmv', '.3gp', '.ogg', '.ogv'];
+            for (const ext of videoExtensions) {
+                if (urlLower.endsWith(ext) || urlLower.includes(ext + '?')) {
+                    return 'video';
+                }
+            }
+            
+            // 默认为视频格式
+            return 'video';
+        }
+        
+        // 验证URL是否有效
+        function isValidUrl(string) {
+            try {
+                new URL(string);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+        
+        // 显示错误信息
+        function showError(message) {
+            const playerContainer = document.getElementById('player');
+            playerContainer.innerHTML = `
+                <div class="error-message">
+                    <h3>${message}</h3>
+                    <p>请通过URL参数提供视频地址</p>
+                    <div class="url-example">
+                        <code>?video=您的视频URL&amp;poster=封面URL&amp;title=视频标题</code>
+                    </div>
+                    <p>支持以下视频格式：</p>
+                    <div class="format-tags">
+                        ${Object.keys(supportedFormats).map(format => 
+                            `<div class="format-tag">${format}</div>`
+                        ).join('')}
+                    </div>
+                    <div class="format-info">
+                        <h4>格式说明：</h4>
+                        <p><strong>MP4/WebM/MKV/AVI/MOV</strong> - 标准视频格式</p>
+                        <p><strong>M3U8 (HLS)</strong> - HTTP Live Streaming，适合直播和自适应码率</p>
+                        <p><strong>MPD (DASH)</strong> - Dynamic Adaptive Streaming over HTTP</p>
+                        <p><strong>FLV</strong> - Flash Video格式，适合直播流</p>
+                    </div>
+                    <button class="retry-button" onclick="location.reload()">重新加载</button>
+                </div>
+            `;
+        }
+        
+        // 显示没有视频URL的提示
+        function showNoVideoUrl() {
+            const playerContainer = document.getElementById('player');
+            playerContainer.innerHTML = `
+                <div class="error-message">
+                    <h3>没有视频URL</h3>
+                    <p>请通过URL参数提供视频地址</p>
+                    <div class="url-example">
+                        <code>?video=您的视频URL&amp;poster=封面URL&amp;title=视频标题</code>
+                    </div>
+                    <p>支持以下视频格式：</p>
+                    <div class="format-tags">
+                        ${Object.keys(supportedFormats).map(format => 
+                            `<div class="format-tag">${format}</div>`
+                        ).join('')}
+                    </div>
+                    <div class="format-info">
+                        <h4>使用示例：</h4>
+                        <p><code>?video=https://example.com/video.mp4</code></p>
+                        <p><code>?video=https://example.com/stream.m3u8&title=直播流</code></p>
+                        <p><code>?video=https://example.com/stream.mpd&poster=封面.jpg</code></p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 显示加载状态
+        function showLoading() {
+            const playerContainer = document.getElementById('player');
+            playerContainer.innerHTML = `
+                <div class="loading">
+                    <span>正在加载视频...</span>
+                </div>
+            `;
+        }
+        
+        // 添加格式指示器
+        function addFormatIndicator(format) {
+            const playerContainer = document.getElementById('player');
+            const existingIndicator = playerContainer.querySelector('.hls-indicator, .dash-indicator');
+            if (existingIndicator) {
+                existingIndicator.remove();
+            }
+            
+            if (format === 'hls') {
+                const indicator = document.createElement('div');
+                indicator.className = 'hls-indicator';
+                indicator.textContent = 'HLS';
+                playerContainer.appendChild(indicator);
+            } else if (format === 'dash') {
+                const indicator = document.createElement('div');
+                indicator.className = 'dash-indicator';
+                indicator.textContent = 'DASH';
+                playerContainer.appendChild(indicator);
+            }
+        }
+        
+        // 初始化播放器
+        async function initPlayer(videoSource) {
+            try {
+                // 显示加载状态
+                showLoading();
+                
+                // 验证视频URL
+                if (!videoSource.url || !isValidUrl(videoSource.url)) {
+                    throw new Error('视频URL无效');
+                }
+                
+                // 如果已有播放器实例，先销毁
+                if (artPlayer) {
+                    artPlayer.destroy();
+                }
+                
+                // 销毁之前的流媒体实例
+                if (hls) {
+                    hls.destroy();
+                    hls = null;
+                }
+                if (dashPlayer) {
+                    dashPlayer.destroy();
+                    dashPlayer = null;
+                }
+                if (flvPlayer) {
+                    flvPlayer.destroy();
+                    flvPlayer = null;
+                }
+                
+                // 创建播放器配置
+                const playerConfig = {
+                    container: '#player',
+                    url: videoSource.url,
+                    poster: videoSource.poster || '',
+                    title: videoSource.title || '视频',
+                    volume: 0.5,
+                    isLive: false,
+                    muted: false,
+                    autoplay: false,
+                    pip: true,
+                    autoSize: true,
+                    autoMini: true,
+                    screenshot: true,
+                    setting: true,
+                    loop: false,
+                    flip: true,
+                    playbackRate: true,
+                    aspectRatio: true,
+                    fullscreen: true,
+                    fullscreenWeb: true,
+                    subtitleOffset: true,
+                    miniProgressBar: false,
+                    mutex: true,
+                    backdrop: true,
+                    playsInline: true,
+                    theme: '#fdbb2d',
+                    moreVideoAttr: {
+                        crossOrigin: 'anonymous'
+                    },
+                    settings: [
+                        {
+                            width: 200,
+                            html: '播放速度',
+                            tooltip: 'Speed',
+                            icon: '<i>⏩</i>',
+                            selector: [
+                                { html: '0.5x', value: 0.5 },
+                                { html: '0.75x', value: 0.75 },
+                                { default: true, html: '正常', value: 1 },
+                                { html: '1.25x', value: 1.25 },
+                                { html: '1.5x', value: 1.5 },
+                                { html: '2.0x', value: 2 },
+                            ],
+                            onSelect: function (item) {
+                                artPlayer.playbackRate = item.value;
+                                return item.html;
+                            },
+                        },
+                        {
+                            width: 200,
+                            html: '画面翻转',
+                            tooltip: 'Flip',
+                            icon: '<i>🔄</i>',
+                            selector: [
+                                { default: true, html: '正常', value: 'none' },
+                                { html: '水平翻转', value: 'horizontal' },
+                                { html: '垂直翻转', value: 'vertical' },
+                            ],
+                            onSelect: function (item) {
+                                artPlayer.flip = item.value;
+                                return item.html;
+                            },
+                        },
+                    ],
+                    icons: {
+                        loading: '<div style="width:24px;height:24px;border:2px solid #fdbb2d;border-radius:50%;border-top-color:transparent;animation:spin 1s linear infinite;"></div>',
+                        play: '<i▶️</i>',
+                        pause: '<i>⏸️</i>',
+                        volume: '<i>🔊</i>',
+                        volumeClose: '<i>🔇</i>',
+                        screenshot: '<i>📷</i>',
+                        setting: '<i>⚙️</i>',
+                        pip: '<i>📌</i>',
+                        fullscreenOn: '<i>⛶</i>',
+                        fullscreenOff: '<i>⛷️</i>',
+                        playbackRate: '<i>⏩</i>',
+                    },
+                };
+                
+                // 创建播放器
+                artPlayer = new Artplayer(playerConfig);
+                
+                const videoType = videoSource.type || detectVideoType(videoSource.url);
+                
+                // 根据视频类型初始化相应的播放器
+                switch (videoType) {
+                    case 'hls':
+                        await initHLSPlayer(videoSource.url);
+                        break;
+                    case 'dash':
+                        await initDASHPlayer(videoSource.url);
+                        break;
+                    case 'flv':
+                        await initFLVPlayer(videoSource.url);
+                        break;
+                    case 'video':
+                    default:
+                        // 标准视频格式，ArtPlayer会自动处理
+                        break;
+                }
+                
+                // 监听播放器事件
+                artPlayer.on('video:error', (error) => {
+                    console.error('视频加载错误:', error);
+                    showError('视频播放出错: ' + error.message);
+                });
+                
+                artPlayer.on('destroy', () => {
+                    console.log('播放器已销毁');
+                    destroyStreamingPlayers();
+                });
+                
+                return artPlayer;
+            } catch (error) {
+                console.error('播放器初始化错误:', error);
+                showError(error.message);
+                return null;
+            }
+        }
+        
+        // 初始化HLS播放器
+        async function initHLSPlayer(url) {
+            if (Hls.isSupported()) {
+                addFormatIndicator('hls');
+                hls = new Hls({
+                    enableWorker: false,
+                    lowLatencyMode: true,
+                    backBufferLength: 90
+                });
+                
+                hls.loadSource(url);
+                hls.attachMedia(artPlayer.video);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    console.log('HLS流媒体已加载');
+                });
+                
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    console.error('HLS错误:', data);
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                showError('HLS网络错误，请检查网络连接');
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                showError('HLS媒体错误，视频源可能有问题');
+                                break;
+                            default:
+                                showError('HLS播放器发生错误');
+                                break;
+                        }
+                    }
+                });
+            } else if (artPlayer.video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari原生支持HLS
+                artPlayer.video.src = url;
+            } else {
+                throw new Error('当前浏览器不支持HLS播放');
+            }
+        }
+        
+        // 初始化DASH播放器
+        async function initDASHPlayer(url) {
+            if (dashjs.MediaPlayer.isSupported()) {
+                addFormatIndicator('dash');
+                dashPlayer = dashjs.MediaPlayer().create();
+                dashPlayer.initialize(artPlayer.video, url, false);
+                
+                dashPlayer.on('error', function(e) {
+                    console.error('DASH错误:', e);
+                    showError('DASH流媒体播放错误');
+                });
+            } else {
+                throw new Error('当前浏览器不支持DASH播放');
+            }
+        }
+        
+        // 初始化FLV播放器
+        async function initFLVPlayer(url) {
+            if (flvjs.isSupported()) {
+                flvPlayer = flvjs.createPlayer({
+                    type: 'flv',
+                    url: url
+                });
+                flvPlayer.attachMediaElement(artPlayer.video);
+                flvPlayer.load();
+                
+                flvPlayer.on(flvjs.Events.ERROR, function(e) {
+                    console.error('FLV错误:', e);
+                    showError('FLV流媒体播放错误');
+                });
+            } else {
+                throw new Error('当前浏览器不支持FLV播放');
+            }
+        }
+        
+        // 销毁流媒体播放器
+        function destroyStreamingPlayers() {
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+            if (dashPlayer) {
+                dashPlayer.destroy();
+                dashPlayer = null;
+            }
+            if (flvPlayer) {
+                flvPlayer.destroy();
+                flvPlayer = null;
+            }
+        }
+        
+        // 页面加载完成后初始化播放器
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化播放器
+            setTimeout(() => {
+                const urlParams = getUrlParams();
+                
+                if (urlParams) {
+                    // 有URL参数，初始化播放器
+                    initPlayer(urlParams);
+                } else {
+                    // 没有URL参数，显示提示
+                    showNoVideoUrl();
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>
